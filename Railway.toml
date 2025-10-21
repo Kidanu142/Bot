@@ -4,5 +4,6 @@ builder = "nixpacks"
 [deploy]
 startCommand = "python telegram_bot.py"
 
+# Disable health checks for Telegram bot
 [healthCheck]
 enabled = false
