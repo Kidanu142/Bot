@@ -3,3 +3,6 @@ builder = "nixpacks"
 
 [deploy]
 startCommand = "python telegram_bot.py"
+
+[healthCheck]
+enabled = false
