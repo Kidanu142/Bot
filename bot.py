@@ -1,14 +1,14 @@
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from datetime import datetime
 import json
+from datetime import datetime
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 TOKEN = os.getenv("TOKEN")
 AUTHORIZED_USER = "viper_5_8"  # Your username
 
 # Store broadcast lists and file history
-broadcast_groups = {}  # group_id -> list of user_ids
+broadcast_groups = {}  # chat_id -> user_info
 file_history = []  # Store sent files for reference
 
 # Admin menu keyboard
@@ -26,7 +26,7 @@ user_keyboard = [
 ]
 user_reply_markup = ReplyKeyboardMarkup(user_keyboard, resize_keyboard=True)
 
-def is_admin(user_id: int, username: str) -> bool:
+def is_admin(username: str) -> bool:
     """Check if user is the authorized admin"""
     return username == AUTHORIZED_USER
 
@@ -34,7 +34,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     username = user.username
     
-    if is_admin(user.id, username):
+    if is_admin(username):
         await update.message.reply_text(
             f"✅ Welcome back, Master @{username}!\n\n"
             f"📌 **Admin Commands:**\n"
@@ -69,7 +69,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = user.username
     text = update.message.text
     
-    if is_admin(user.id, username):
+    if is_admin(username):
         # Admin commands
         if text == "📤 Send File":
             await update.message.reply_text(
@@ -123,7 +123,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     username = user.username
     
-    if not is_admin(user.id, username):
+    if not is_admin(username):
         await update.message.reply_text("⛔ You're not authorized to send files!")
         return
     
@@ -201,7 +201,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_count += 1
             
         except Exception as e:
-            failed_users.append(user_info.get('username', chat_id))
+            failed_users.append(user_info.get('username', str(chat_id)))
     
     # Save to history
     file_history.append({
@@ -227,7 +227,7 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     username = user.username
     
-    if not is_admin(user.id, username):
+    if not is_admin(username):
         return
     
     if not context.user_data.get('awaiting_broadcast'):
@@ -269,11 +269,13 @@ async def view_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     users_list = "👥 **Registered Users**\n\n"
     for i, (chat_id, info) in enumerate(broadcast_groups.items(), 1):
-        users_list += f"{i}. @{info.get('username', 'N/A')} - {info.get('first_name', 'Unknown')}\n"
-    
-    # Split if too long
-    if len(users_list) > 4000:
-        users_list = users_list[:4000] + "\n... (truncated)"
+        username = info.get('username', 'N/A')
+        first_name = info.get('first_name', 'Unknown')
+        users_list += f"{i}. @{username} - {first_name}\n"
+        
+        if len(users_list) > 4000:
+            users_list += "\n... (truncated)"
+            break
     
     await update.message.reply_text(users_list, parse_mode='Markdown')
 
@@ -348,6 +350,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         audio=file_id,
                         caption=caption
                     )
+                elif file_type == "voice":
+                    await query.message.reply_voice(
+                        voice=file_id,
+                        caption=caption
+                    )
             except Exception as e:
                 await query.message.reply_text("❌ Failed to load file. It might be expired.")
         else:
@@ -406,19 +413,25 @@ def save_data():
         'broadcast_groups': broadcast_groups,
         'file_history': file_history
     }
-    with open('bot_data.json', 'w') as f:
-        json.dump(data, f, indent=2)
+    try:
+        with open('bot_data.json', 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Error saving data: {e}")
 
 def load_data():
     """Load saved data"""
     global broadcast_groups, file_history
     if os.path.exists('bot_data.json'):
-        with open('bot_data.json', 'r') as f:
-            data = json.load(f)
-            broadcast_groups = data.get('broadcast_groups', {})
-            file_history = data.get('file_history', [])
-            # Convert string keys back to int
-            broadcast_groups = {int(k): v for k, v in broadcast_groups.items()}
+        try:
+            with open('bot_data.json', 'r') as f:
+                data = json.load(f)
+                broadcast_groups = data.get('broadcast_groups', {})
+                file_history = data.get('file_history', [])
+                # Convert string keys back to int
+                broadcast_groups = {int(k): v for k, v in broadcast_groups.items()}
+        except Exception as e:
+            print(f"Error loading data: {e}")
 
 # Main execution
 def main():
@@ -438,10 +451,6 @@ def main():
     application.add_handler(MessageHandler(
         filters.Document.ALL | filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.VOICE,
         handle_file
-    ))
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        handle_broadcast
     ))
     application.add_handler(CallbackQueryHandler(handle_callback))
     
